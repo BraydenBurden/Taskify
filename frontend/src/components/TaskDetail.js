@@ -540,15 +540,6 @@ const TaskDetail = ({
             </Box>
           </Box>
         )}
-
-        <Box>
-          <Typography
-            variant="body1"
-            color={task.completed ? "success.main" : "text.primary"}
-          >
-            {task.completed ? "Completed" : "In Progress"}
-          </Typography>
-        </Box>
       </Stack>
     </Box>
   );

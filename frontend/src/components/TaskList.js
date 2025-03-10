@@ -23,6 +23,10 @@ import {
   ToggleButtonGroup,
   ToggleButton,
   Fade,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from "@mui/material";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
@@ -33,6 +37,7 @@ import TaskDetail from "./TaskDetail";
 import { taskService } from "../services/api";
 import AddIcon from "@mui/icons-material/Add";
 import CalendarTodayIcon from "@mui/icons-material/CalendarToday";
+import CloseIcon from "@mui/icons-material/Close";
 
 const modalStyle = {
   position: "absolute",
@@ -66,12 +71,14 @@ const TaskList = () => {
   const [loading, setLoading] = useState(true);
   const [newSubtask, setNewSubtask] = useState("");
   const [taskFilter, setTaskFilter] = useState("ongoing");
-  const [subtaskFilter, setSubtaskFilter] = useState("ongoing");
+  const [subtaskFilter, setSubtaskFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [mountStarted, setMountStarted] = useState(false);
   const [deletingTaskId, setDeletingTaskId] = useState(null);
+  const [selectedSubtask, setSelectedSubtask] = useState(null);
+  const [subtaskDialogOpen, setSubtaskDialogOpen] = useState(false);
 
   useEffect(() => {
     fetchTasks();
@@ -139,12 +146,14 @@ const TaskList = () => {
 
   const handleToggleComplete = async (taskId) => {
     try {
-      const task = tasks.find((t) => t.id === taskId);
+      // Convert taskId back to number since it comes as string from the UI
+      const numericTaskId = parseInt(taskId, 10);
+      const task = tasks.find((t) => t.id === numericTaskId);
       const newStatus = task.status === "completed" ? "pending" : "completed";
-      await taskService.updateTaskStatus(taskId, newStatus);
+      await taskService.updateTaskStatus(numericTaskId, newStatus);
       setTasks((prevTasks) =>
         prevTasks.map((t) =>
-          t.id === taskId ? { ...t, status: newStatus } : t
+          t.id === numericTaskId ? { ...t, status: newStatus } : t
         )
       );
     } catch (err) {
@@ -215,7 +224,7 @@ const TaskList = () => {
     if (!expandTask) {
       // Opening a task - use cached data
       setExpandTask(task);
-      setSubtaskFilter("ongoing");
+      setSubtaskFilter("all");
       setSubtasks(task.subtasks || []);
     } else {
       // Closing a task - start transition first
@@ -410,14 +419,19 @@ const TaskList = () => {
   };
 
   const getTaskProgress = (task) => {
-    // If task is expanded, calculate progress based on current subtasks state
-    if (expandTask && expandTask.id === task.id && subtasks.length > 0) {
-      return Math.round(
-        (subtasks.filter((st) => st.completed).length / subtasks.length) * 100
-      );
+    // If task is completed, return 100%
+    if (task.status === "completed") return 100;
+
+    // If task has subtasks, calculate progress based on completed subtasks
+    if (task.subtasks && task.subtasks.length > 0) {
+      const completedSubtasks = task.subtasks.filter(
+        (st) => st.completed
+      ).length;
+      return Math.round((completedSubtasks / task.subtasks.length) * 100);
     }
-    // If task is not expanded or has no subtasks, return completion status
-    return task.status === "completed" ? 100 : 0;
+
+    // If task has no subtasks and is not completed, return 0%
+    return 0;
   };
 
   const getProgressColor = (progress) => {
@@ -440,6 +454,16 @@ const TaskList = () => {
       const b = Math.round(0 + 118 * ratio); // Blue increases to 118
       return `rgb(${r}, ${g}, ${b})`;
     }
+  };
+
+  const handleSubtaskClick = (subtask) => {
+    setSelectedSubtask(subtask);
+    setSubtaskDialogOpen(true);
+  };
+
+  const handleCloseSubtaskDialog = () => {
+    setSubtaskDialogOpen(false);
+    setSelectedSubtask(null);
   };
 
   if (loading) {
@@ -516,7 +540,7 @@ const TaskList = () => {
             variant="contained"
             startIcon={<AddIcon />}
             onClick={onOpenForm}
-            sx={{ height: 40 }}
+            sx={{ height: 40, "& .MuiButton-startIcon": { mr: 0.5 } }}
           >
             Create Task
           </Button>
@@ -804,7 +828,7 @@ const TaskList = () => {
                           display: "flex",
                           alignItems: "center",
                           gap: 2,
-                          mb: 1,
+                          mb: 2,
                         }}
                       >
                         <IconButton
@@ -814,7 +838,15 @@ const TaskList = () => {
                           {task.status === "completed" ? (
                             <CheckCircleIcon color="success" fontSize="large" />
                           ) : (
-                            <RadioButtonUncheckedIcon fontSize="large" />
+                            <CheckCircleIcon
+                              sx={{
+                                color:
+                                  theme.palette.mode === "dark"
+                                    ? "rgba(255, 255, 255, 0.3)"
+                                    : "rgba(0, 0, 0, 0.2)",
+                              }}
+                              fontSize="large"
+                            />
                           )}
                         </IconButton>
                         <Typography
@@ -824,20 +856,9 @@ const TaskList = () => {
                         >
                           {task.title}
                         </Typography>
-                      </Box>
-
-                      <Box
-                        sx={{
-                          display: "flex",
-                          gap: 2,
-                          flexWrap: "wrap",
-                          mb: 1,
-                        }}
-                      >
-                        <Box>
-                          <Typography variant="body2" color="text.secondary">
-                            Priority:
-                          </Typography>
+                        <Box
+                          sx={{ display: "flex", alignItems: "center", gap: 2 }}
+                        >
                           <Chip
                             label={task.priority}
                             color={getPriorityColor(task.priority)}
@@ -852,8 +873,46 @@ const TaskList = () => {
                               }),
                             }}
                           />
+                          <Box
+                            sx={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 1,
+                            }}
+                          >
+                            <CalendarTodayIcon
+                              fontSize="small"
+                              color="action"
+                            />
+                            <Typography variant="body2" color="text.secondary">
+                              {task.due_date
+                                ? new Date(task.due_date).toLocaleDateString()
+                                : "No due date"}
+                            </Typography>
+                            <IconButton
+                              size="small"
+                              onClick={(e) => handleDetailsClick(e, null)}
+                              sx={{
+                                ml: 1,
+                                color: "text.secondary",
+                                "&:hover": {
+                                  color: "text.primary",
+                                },
+                              }}
+                            >
+                              <CloseIcon fontSize="small" />
+                            </IconButton>
+                          </Box>
                         </Box>
+                      </Box>
 
+                      <Box
+                        sx={{
+                          display: "flex",
+                          gap: 2,
+                          mb: 1,
+                        }}
+                      >
                         <Box>
                           <Typography variant="body2" color="text.secondary">
                             Description:
@@ -862,34 +921,70 @@ const TaskList = () => {
                             {task.description || "No description provided"}
                           </Typography>
                         </Box>
-
-                        <Box>
-                          <Typography variant="body2" color="text.secondary">
-                            Due Date:
-                          </Typography>
-                          <Typography variant="body1">
-                            {task.due_date
-                              ? new Date(task.due_date).toLocaleDateString()
-                              : "No due date"}
-                          </Typography>
-                        </Box>
                       </Box>
 
                       <Box
                         sx={{
                           display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          mb: 1,
+                          alignItems: "flex-end",
+                          gap: 2,
+                          mb: 2,
                         }}
                       >
-                        <Typography variant="h6">Subtasks</Typography>
+                        <Typography variant="h6" sx={{ flexShrink: 0, mb: 0 }}>
+                          Subtasks
+                        </Typography>
+
+                        {task.subtasks?.length > 0 && (
+                          <Box sx={{ flex: 1, minWidth: 0 }}>
+                            <Box
+                              sx={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 1,
+                                mb: 0.5,
+                              }}
+                            >
+                              <Typography
+                                variant="body2"
+                                color="text.secondary"
+                              >
+                                Overall Progress:
+                              </Typography>
+                              <Typography variant="body2" color="text.primary">
+                                {getTaskProgress(task)}%
+                              </Typography>
+                            </Box>
+                            <LinearProgress
+                              variant="determinate"
+                              value={getTaskProgress(task)}
+                              sx={{
+                                height: 8,
+                                borderRadius: 4,
+                                backgroundColor:
+                                  theme.palette.mode === "dark"
+                                    ? "rgba(255, 255, 255, 0.1)"
+                                    : "rgba(0, 0, 0, 0.1)",
+                                "& .MuiLinearProgress-bar": {
+                                  borderRadius: 4,
+                                  backgroundColor: (theme) =>
+                                    getProgressColor(getTaskProgress(task)),
+                                  transition:
+                                    "transform 0.2s cubic-bezier(0.4, 0, 0.2, 1) 0.2s",
+                                },
+                              }}
+                            />
+                          </Box>
+                        )}
+
                         <Paper
                           elevation={1}
                           sx={{
                             p: 0.5,
                             bgcolor: "background.default",
                             borderRadius: 2,
+                            flexShrink: 0,
+                            transform: "translateY(4px)",
                           }}
                         >
                           <ToggleButtonGroup
@@ -951,69 +1046,6 @@ const TaskList = () => {
                         </Paper>
                       </Box>
 
-                      {task.subtasks?.length > 0 && (
-                        <Box sx={{ mb: 1 }}>
-                          <Box
-                            sx={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 1,
-                              mb: 0.5,
-                            }}
-                          >
-                            <Typography variant="body2" color="text.secondary">
-                              Overall Progress:
-                            </Typography>
-                            <Typography variant="body2" color="text.primary">
-                              {getTaskProgress(task)}%
-                            </Typography>
-                          </Box>
-                          <LinearProgress
-                            variant="determinate"
-                            value={getTaskProgress(task)}
-                            sx={{
-                              height: 8,
-                              borderRadius: 4,
-                              backgroundColor:
-                                theme.palette.mode === "dark"
-                                  ? "rgba(255, 255, 255, 0.1)"
-                                  : "rgba(0, 0, 0, 0.1)",
-                              "& .MuiLinearProgress-bar": {
-                                borderRadius: 4,
-                                backgroundColor: (theme) =>
-                                  getProgressColor(getTaskProgress(task)),
-                                transition:
-                                  "transform 0.2s cubic-bezier(0.4, 0, 0.2, 1) 0.2s",
-                              },
-                            }}
-                          />
-                        </Box>
-                      )}
-
-                      <Box sx={{ display: "flex", gap: 1, mb: 1 }}>
-                        <TextField
-                          fullWidth
-                          size="small"
-                          placeholder="Add new subtask"
-                          value={newSubtask}
-                          onChange={(e) => setNewSubtask(e.target.value)}
-                          onKeyPress={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              handleAddSubtask();
-                            }
-                          }}
-                        />
-                        <Button
-                          variant="contained"
-                          onClick={handleAddSubtask}
-                          disabled={!newSubtask.trim()}
-                          startIcon={<AddIcon />}
-                        >
-                          Add
-                        </Button>
-                      </Box>
-
                       <List
                         sx={{
                           flex: 1,
@@ -1027,6 +1059,7 @@ const TaskList = () => {
                           gridAutoRows: "min-content",
                           gap: 1,
                           p: 1,
+                          mb: 2,
                           opacity:
                             expandTask && expandTask.id === task.id ? 1 : 0,
                           transform:
@@ -1045,6 +1078,7 @@ const TaskList = () => {
                           <ListItem
                             key={subtask.id}
                             disableGutters
+                            onClick={() => handleSubtaskClick(subtask)}
                             sx={{
                               bgcolor: "background.paper",
                               borderRadius: 1,
@@ -1056,6 +1090,10 @@ const TaskList = () => {
                               px: 2,
                               py: 0.75,
                               height: "fit-content",
+                              cursor: "pointer",
+                              "&:hover": {
+                                bgcolor: theme.palette.action.hover,
+                              },
                               "& .MuiListItemSecondaryAction-root": {
                                 position: "relative",
                                 transform: "none",
@@ -1066,12 +1104,22 @@ const TaskList = () => {
                           >
                             <IconButton
                               edge="start"
-                              onClick={() => handleToggleSubtask(subtask.id)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleToggleSubtask(subtask.id);
+                              }}
                             >
                               {subtask.completed ? (
                                 <CheckCircleIcon color="success" />
                               ) : (
-                                <RadioButtonUncheckedIcon />
+                                <CheckCircleIcon
+                                  sx={{
+                                    color:
+                                      theme.palette.mode === "dark"
+                                        ? "rgba(255, 255, 255, 0.3)"
+                                        : "rgba(0, 0, 0, 0.2)",
+                                  }}
+                                />
                               )}
                             </IconButton>
                             <ListItemText
@@ -1096,7 +1144,10 @@ const TaskList = () => {
                             />
                             <IconButton
                               edge="end"
-                              onClick={() => handleDeleteSubtask(subtask.id)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteSubtask(subtask.id);
+                              }}
                               sx={{
                                 color: "error.main",
                                 ml: 1,
@@ -1107,6 +1158,30 @@ const TaskList = () => {
                           </ListItem>
                         ))}
                       </List>
+
+                      <Box sx={{ display: "flex", gap: 1 }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          placeholder="Add new subtask"
+                          value={newSubtask}
+                          onChange={(e) => setNewSubtask(e.target.value)}
+                          onKeyPress={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              handleAddSubtask();
+                            }
+                          }}
+                        />
+                        <Button
+                          variant="contained"
+                          onClick={handleAddSubtask}
+                          disabled={!newSubtask.trim()}
+                          startIcon={<AddIcon />}
+                        >
+                          Add
+                        </Button>
+                      </Box>
                     </Box>
                   </CardContent>
 
@@ -1114,21 +1189,28 @@ const TaskList = () => {
                     sx={{
                       p: 2,
                       pt: 0,
+                      display: "flex",
                       justifyContent: "space-between",
-                      opacity: expandTask && expandTask.id === task.id ? 1 : 0,
-                      transform:
-                        expandTask && expandTask.id === task.id
-                          ? "translateY(0)"
-                          : "translateY(20px)",
-                      transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1) 0.3s",
+                      alignItems: "center",
+                      gap: 1,
                     }}
                   >
-                    <Box>
+                    <Box sx={{ display: "flex", gap: 1 }}>
+                      <Button
+                        size="small"
+                        color="success"
+                        onClick={() => handleToggleComplete(task.id)}
+                        startIcon={<CheckCircleIcon />}
+                        sx={{ "& .MuiButton-startIcon": { mr: 0.5 } }}
+                      >
+                        Complete
+                      </Button>
                       <Button
                         size="small"
                         color="primary"
                         onClick={() => handleEditClick(task)}
                         startIcon={<EditIcon />}
+                        sx={{ "& .MuiButton-startIcon": { mr: 0.5 } }}
                       >
                         Edit
                       </Button>
@@ -1144,6 +1226,7 @@ const TaskList = () => {
                           )
                         }
                         disabled={deletingTaskId === task.id}
+                        sx={{ "& .MuiButton-startIcon": { mr: 0.5 } }}
                       >
                         {deletingTaskId === task.id ? "Deleting..." : "Delete"}
                       </Button>
@@ -1153,6 +1236,11 @@ const TaskList = () => {
                       color="primary"
                       onClick={(e) => handleDetailsClick(e, null)}
                       startIcon={<InfoIcon />}
+                      sx={{
+                        "& .MuiButton-startIcon": { mr: 0.5 },
+                        minWidth: "105px",
+                        whiteSpace: "nowrap",
+                      }}
                     >
                       Show Less
                     </Button>
@@ -1179,7 +1267,14 @@ const TaskList = () => {
                         {task.status === "completed" ? (
                           <CheckCircleIcon color="success" />
                         ) : (
-                          <RadioButtonUncheckedIcon />
+                          <CheckCircleIcon
+                            sx={{
+                              color:
+                                theme.palette.mode === "dark"
+                                  ? "rgba(255, 255, 255, 0.3)"
+                                  : "rgba(0, 0, 0, 0.2)",
+                            }}
+                          />
                         )}
                       </IconButton>
                       <Typography
@@ -1281,6 +1376,19 @@ const TaskList = () => {
                             ? new Date(task.due_date).toLocaleDateString()
                             : "No due date"}
                         </Typography>
+                        <IconButton
+                          size="small"
+                          onClick={(e) => handleDetailsClick(e, null)}
+                          sx={{
+                            ml: 1,
+                            color: "text.secondary",
+                            "&:hover": {
+                              color: "text.primary",
+                            },
+                          }}
+                        >
+                          <CloseIcon fontSize="small" />
+                        </IconButton>
                       </Box>
                       <Chip
                         label={task.status}
@@ -1305,15 +1413,28 @@ const TaskList = () => {
                     sx={{
                       p: 2,
                       pt: 0,
+                      display: "flex",
                       justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 1,
                     }}
                   >
-                    <Box>
+                    <Box sx={{ display: "flex", gap: 1 }}>
+                      <Button
+                        size="small"
+                        color="success"
+                        onClick={() => handleToggleComplete(task.id)}
+                        startIcon={<CheckCircleIcon />}
+                        sx={{ "& .MuiButton-startIcon": { mr: 0.5 } }}
+                      >
+                        Complete
+                      </Button>
                       <Button
                         size="small"
                         color="primary"
                         onClick={() => handleEditClick(task)}
                         startIcon={<EditIcon />}
+                        sx={{ "& .MuiButton-startIcon": { mr: 0.5 } }}
                       >
                         Edit
                       </Button>
@@ -1329,6 +1450,7 @@ const TaskList = () => {
                           )
                         }
                         disabled={deletingTaskId === task.id}
+                        sx={{ "& .MuiButton-startIcon": { mr: 0.5 } }}
                       >
                         {deletingTaskId === task.id ? "Deleting..." : "Delete"}
                       </Button>
@@ -1338,6 +1460,11 @@ const TaskList = () => {
                       color="primary"
                       onClick={(e) => handleDetailsClick(e, task)}
                       startIcon={<InfoIcon />}
+                      sx={{
+                        "& .MuiButton-startIcon": { mr: 0.5 },
+                        minWidth: "105px",
+                        whiteSpace: "nowrap",
+                      }}
                     >
                       See more...
                     </Button>
@@ -1389,6 +1516,47 @@ const TaskList = () => {
           </Box>
         </Fade>
       </Modal>
+
+      <Dialog
+        open={subtaskDialogOpen}
+        onClose={handleCloseSubtaskDialog}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            {selectedSubtask?.completed ? (
+              <CheckCircleIcon color="success" />
+            ) : (
+              <CheckCircleIcon
+                sx={{
+                  color:
+                    theme.palette.mode === "dark"
+                      ? "rgba(255, 255, 255, 0.3)"
+                      : "rgba(0, 0, 0, 0.2)",
+                }}
+              />
+            )}
+            Subtask Details
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="h6" gutterBottom>
+            {selectedSubtask?.title}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Status: {selectedSubtask?.completed ? "Completed" : "Ongoing"}
+          </Typography>
+          {selectedSubtask?.description && (
+            <Typography variant="body1" sx={{ mt: 2 }}>
+              {selectedSubtask.description}
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseSubtaskDialog}>Close</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
